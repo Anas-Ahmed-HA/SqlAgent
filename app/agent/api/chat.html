@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQL Agent</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%232f6fde'/%3E%3Cpath d='M4 5h8M4 8h8M4 11h5' stroke='white' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #e3e6ec;
+    --accent: #2f6fde; --accent-text: #ffffff; --user: #e8f0fe; --error: #b42318; --error-bg: #fef3f2;
+    --ok: #12805c; --warn: #b54708; --code: #f2f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1e26; --text: #e6e8ee; --muted: #98a2b3; --line: #2b313c;
+      --accent: #5b8def; --accent-text: #0b0d12; --user: #22314d; --error: #f97066; --error-bg: #2a1716;
+      --ok: #47cd89; --warn: #fdb022; --code: #232833;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .app { max-width: 920px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; padding: 0 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 14px 0 10px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0 8px 0 0; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.ok { color: var(--ok); border-color: currentColor; }
+  .pill.bad { color: var(--error); border-color: currentColor; }
+  .token { flex: 1 1 260px; display: flex; gap: 6px; }
+  input, textarea, button { font: inherit; color: inherit; }
+  input[type=password], input[type=text], textarea {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; width: 100%;
+  }
+  button { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 7px 12px; cursor: pointer; white-space: nowrap; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .5; cursor: default; }
+  #log { flex: 1; overflow-y: auto; padding: 16px 0; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; background: var(--user); border-color: transparent; white-space: pre-wrap; }
+  .msg.note { align-self: flex-end; background: transparent; border-style: dashed; color: var(--muted); font-size: 14px; white-space: pre-wrap; }
+  .msg.error { border-color: var(--error); background: var(--error-bg); color: var(--error); white-space: pre-wrap; }
+  .msg.interim { color: var(--muted); font-style: italic; }
+  .msg p { margin: 0 0 8px; } .msg p:last-child { margin-bottom: 0; }
+  .msg h1, .msg h2, .msg h3, .msg h4 { font-size: 15px; margin: 10px 0 6px; }
+  .msg ul, .msg ol { margin: 0 0 8px; padding-left: 22px; }
+  .msg code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  .msg pre { background: var(--code); padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+  .msg pre code { padding: 0; background: none; }
+  .table-wrap { overflow-x: auto; margin: 0 0 8px; }
+  .msg table { border-collapse: collapse; font-size: 14px; }
+  .msg th, .msg td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
+  .msg th { background: var(--code); }
+  details.steps { margin-top: 8px; font-size: 13px; color: var(--muted); }
+  details.steps summary { cursor: pointer; }
+  .step { border-top: 1px solid var(--line); padding: 6px 0; }
+  .step b { color: var(--text); font-weight: 600; }
+  .step .fail { color: var(--error); }
+  .step pre { margin: 4px 0 0; white-space: pre-wrap; max-height: 180px; overflow-y: auto; }
+  #status { min-height: 22px; font-size: 13px; color: var(--muted); padding: 2px 0; }
+  #status:not(:empty)::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1s infinite alternate; }
+  @keyframes pulse { from { opacity: .3; } to { opacity: 1; } }
+  #tasks { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; background: var(--panel); }
+  #tasks[hidden], #question[hidden] { display: none; }
+  #tasks ol { margin: 4px 0 0; padding-left: 20px; }
+  #tasks .done { text-decoration: line-through; color: var(--muted); }
+  #tasks .dropped { text-decoration: line-through; color: var(--warn); }
+  #question { border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; background: var(--panel); }
+  .q { margin-bottom: 12px; }
+  .q-text { font-weight: 600; margin-bottom: 6px; }
+  .opt { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; cursor: pointer; }
+  .opt small { display: block; color: var(--muted); }
+  .rec { font-size: 11px; color: var(--accent); border: 1px solid currentColor; border-radius: 99px; padding: 0 6px; margin-left: 6px; }
+  .q-actions { display: flex; gap: 8px; }
+  .composer { display: flex; gap: 8px; padding: 6px 0 16px; align-items: flex-end; }
+  .composer textarea { resize: none; height: 46px; max-height: 160px; }
+  .hint { font-size: 12px; color: var(--muted); padding-bottom: 4px; }
+  .used { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .used .dropped { color: var(--warn); }
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text);
+    width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; }
+  dialog::backdrop { background: rgba(0, 0, 0, .35); }
+  .dlg-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .dlg-head h2 { font-size: 16px; margin: 0; }
+  .dlg-body { padding: 12px 16px 16px; overflow-y: auto; max-height: calc(100vh - 120px); }
+  .skill { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .skill .info { flex: 1; min-width: 0; }
+  .skill .name { font-weight: 600; }
+  .skill .desc { font-size: 13px; color: var(--muted); }
+  .skill .row-actions { display: flex; gap: 6px; }
+  .skill .row-actions button { padding: 3px 9px; font-size: 13px; }
+  .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+  .budget { font-size: 12px; color: var(--muted); margin: 6px 0 12px; }
+  .budget.over { color: var(--warn); }
+  fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 12px; margin: 12px 0 0; }
+  legend { font-size: 13px; color: var(--muted); padding: 0 4px; }
+  .field { display: block; margin-bottom: 10px; font-size: 13px; }
+  .field span { display: block; margin-bottom: 4px; color: var(--muted); }
+  .field textarea { min-height: 70px; resize: vertical; }
+  .form-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .form-error { color: var(--error); font-size: 13px; margin-bottom: 8px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>SQL Agent</h1>
+    <span id="health" class="pill">checking…</span>
+    <div class="token">
+      <input id="token" type="password" placeholder="Paste your login token" autocomplete="off" spellcheck="false">
+      <button id="show" type="button" title="Show or hide the token">Show</button>
+    </div>
+    <button id="skills" type="button" title="Skills sent with every message">Skills</button>
+    <button id="new" type="button">New chat</button>
+  </header>
+
+  <dialog id="skills-dialog" aria-labelledby="skills-title">
+    <div class="dlg-head">
+      <h2 id="skills-title">Skills</h2>
+      <button type="button" id="skills-close">Close</button>
+    </div>
+    <div class="dlg-body">
+      <div class="hint">Skills that are on go with every message, in this order. They are kept in this browser.</div>
+      <div id="skill-list"></div>
+      <div id="skill-budget" class="budget"></div>
+      <button type="button" id="skill-add" class="primary">New skill</button>
+
+      <fieldset id="skill-form" hidden>
+        <legend id="skill-form-title">New skill</legend>
+        <div class="form-error" id="skill-error" hidden></div>
+        <label class="field"><span>Write with AI: describe the skill in your own words, then press Write</span>
+          <textarea id="skill-source" placeholder="e.g. always answer with counts, never list employee names, and say which view you used"></textarea>
+        </label>
+        <div class="form-actions" style="margin-bottom:12px"><button type="button" id="skill-propose">Write</button></div>
+        <label class="field"><span>Name</span><input type="text" id="skill-name" maxlength="120"></label>
+        <label class="field"><span>Description: what the skill is for</span><input type="text" id="skill-desc" maxlength="500"></label>
+        <label class="field"><span>Instructions, one per line (at most 20)</span><textarea id="skill-instructions"></textarea></label>
+        <div class="form-actions">
+          <button type="button" id="skill-save" class="primary">Save</button>
+          <button type="button" id="skill-cancel">Cancel</button>
+        </div>
+      </fieldset>
+    </div>
+  </dialog>
+
+  <!-- Visible until the script runs from the agent's own address: opened as a
+       file (or as a static preview), nothing on the page can work. -->
+  <div id="served-note" class="msg error" style="margin-top:16px">
+    This page only works when the agent serves it. Start the agent (<code>uv run python app/main.py</code>)
+    and open <a href="http://127.0.0.1:8321/">http://127.0.0.1:8321/</a> in your browser.
+  </div>
+
+  <div id="log" aria-live="polite"></div>
+
+  <div id="tasks" hidden></div>
+  <div id="question" hidden></div>
+  <div id="status"></div>
+  <div class="hint" id="hint">Enter sends, Shift+Enter adds a line. While the agent works, what you send is a note to it.</div>
+  <form class="composer" id="composer">
+    <textarea id="input" placeholder="Ask about the data…" rows="1"></textarea>
+    <button id="send" class="primary" type="submit">Send</button>
+    <button id="stop" type="button" hidden>Stop</button>
+  </form>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const log = $("log"), input = $("input"), tokenField = $("token");
+const state = { sessionId: newId(), turnId: null, socket: null, running: false, question: null };
+if (location.protocol.startsWith("http")) $("served-note").remove();
+
+// The token lives in this tab only (sessionStorage), never in localStorage or the URL.
+try { tokenField.value = sessionStorage.getItem("sql-agent-token") || ""; } catch {}
+tokenField.addEventListener("input", () => {
+  try { sessionStorage.setItem("sql-agent-token", tokenField.value.trim()); } catch {}
+});
+$("show").onclick = () => {
+  const hidden = tokenField.type === "password";
+  tokenField.type = hidden ? "text" : "password";
+  $("show").textContent = hidden ? "Hide" : "Show";
+};
+
+function newId() {
+  return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/-/g, "");
+}
+function token() {
+  return tokenField.value.trim().replace(/^bearer\s+/i, "");
+}
+
+// -- health ------------------------------------------------------------------
+
+async function checkHealth() {
+  const pill = $("health");
+  try {
+    const body = await (await fetch("/health")).json();
+    pill.textContent = body.mcp_session ? "data service connected" : "data service unreachable";
+    pill.className = "pill " + (body.mcp_session ? "ok" : "bad");
+    pill.title = body.detail || body.mcp_url || "";
+  } catch {
+    pill.textContent = "agent unreachable";
+    pill.className = "pill bad";
+  }
+}
+checkHealth();
+setInterval(() => { if (!state.running) checkHealth(); }, 30000);
+
+// -- rendering ---------------------------------------------------------------
+
+function escapeHtml(text) {
+  return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function inline(text) {
+  return escapeHtml(text)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+}
+function cells(row) {
+  return row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+}
+// A small Markdown subset: the agent answers with paragraphs, lists, tables and code.
+function markdown(source) {
+  const lines = source.replace(/\r/g, "").split("\n");
+  const out = [];
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i];
+    if (/^```/.test(line)) {
+      const code = [];
+      for (i++; i < lines.length && !/^```/.test(lines[i]); i++) code.push(lines[i]);
+      i++;
+      out.push("<pre><code>" + escapeHtml(code.join("\n")) + "</code></pre>");
+    } else if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|?\s*:?-+/.test(lines[i + 1])) {
+      const head = cells(line);
+      const rows = [];
+      for (i += 2; i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i]); i++) rows.push(cells(lines[i]));
+      out.push('<div class="table-wrap"><table><thead><tr>' + head.map((c) => "<th>" + inline(c) + "</th>").join("") +
+        "</tr></thead><tbody>" + rows.map((r) => "<tr>" + r.map((c) => "<td>" + inline(c) + "</td>").join("") + "</tr>").join("") +
+        "</tbody></table></div>");
+    } else if (/^#{1,4}\s/.test(line)) {
+      const level = line.match(/^#+/)[0].length;
+      out.push(`<h${level}>` + inline(line.replace(/^#+\s*/, "")) + `</h${level}>`);
+      i++;
+    } else if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
+      const ordered = /^\s*\d+\./.test(line);
+      const items = [];
+      for (; i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i]); i++) {
+        items.push("<li>" + inline(lines[i].replace(/^\s*([-*]|\d+\.)\s+/, "")) + "</li>");
+      }
+      out.push((ordered ? "<ol>" : "<ul>") + items.join("") + (ordered ? "</ol>" : "</ul>"));
+    } else if (!line.trim()) {
+      i++;
+    } else {
+      const para = [];
+      for (; i < lines.length && lines[i].trim() && !/^(```|#{1,4}\s|\s*([-*]|\d+\.)\s+|\s*\|)/.test(lines[i]); i++) para.push(lines[i]);
+      if (!para.length) { para.push(lines[i]); i++; }
+      out.push("<p>" + para.map(inline).join("<br>") + "</p>");
+    }
+  }
+  return out.join("");
+}
+
+function add(kind, text, { html = false } = {}) {
+  const el = document.createElement("div");
+  el.className = "msg " + kind;
+  if (html) el.innerHTML = text; else el.textContent = text;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+
+function addSteps(el, trace) {
+  const spans = (trace && trace.spans) || [];
+  if (!spans.length) return;
+  const details = document.createElement("details");
+  details.className = "steps";
+  details.innerHTML = `<summary>${spans.length} step${spans.length > 1 ? "s" : ""}</summary>`;
+  for (const span of spans) {
+    const row = document.createElement("div");
+    row.className = "step";
+    const failed = span.outcome !== "success";
+    const input = span.input && span.input.sql ? span.input.sql : JSON.stringify(span.input || {});
+    row.innerHTML = `<b>${escapeHtml(span.ui_status || span.tool)}</b> · ${escapeHtml(span.tool)}` +
+      (failed ? ` · <span class="fail">${escapeHtml(span.error_kind || span.outcome)}</span>` : "") +
+      (span.duration_ms != null ? ` · ${span.duration_ms} ms` : "") +
+      `<pre>${escapeHtml(input)}</pre>` +
+      (span.output ? `<pre>${escapeHtml(span.output.slice(0, 2000))}</pre>` : "");
+    details.appendChild(row);
+  }
+  el.appendChild(details);
+}
+
+function setStatus(text) { $("status").textContent = text || ""; }
+
+function renderTasks(tasks) {
+  const box = $("tasks");
+  if (!tasks || !tasks.length) { box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = "<b>Task list</b><ol>" + tasks.map((t) =>
+    `<li class="${escapeHtml(t.status)}">${escapeHtml(t.title || t.text)}` +
+    `${t.status === "in_progress" ? " (working)" : ""}${t.note ? " · " + escapeHtml(t.note) : ""}</li>`).join("") + "</ol>";
+}
+
+// -- questions -----------------------------------------------------------------
+
+function renderQuestion(event) {
+  state.question = event;
+  const box = $("question");
+  box.hidden = false;
+  box.innerHTML = "";
+  event.questions.forEach((q, n) => {
+    const block = document.createElement("div");
+    block.className = "q";
+    block.innerHTML = `<div class="q-text">${escapeHtml(q.question)}</div>`;
+    q.options.forEach((option, k) => {
+      const label = document.createElement("label");
+      label.className = "opt";
+      label.innerHTML = `<input type="${q.multi_select ? "checkbox" : "radio"}" name="q${n}" value="${escapeHtml(option.label)}"${!q.multi_select && k === 0 ? " checked" : ""}>` +
+        `<span>${escapeHtml(option.label)}${option.recommended ? '<span class="rec">recommended</span>' : ""}` +
+        `${option.description ? "<small>" + escapeHtml(option.description) + "</small>" : ""}</span>`;
+      block.appendChild(label);
+    });
+    if (q.allow_other) {
+      const other = document.createElement("input");
+      other.type = "text"; other.placeholder = "Or write your own answer"; other.dataset.other = String(n);
+      block.appendChild(other);
+    }
+    box.appendChild(block);
+  });
+  const actions = document.createElement("div");
+  actions.className = "q-actions";
+  actions.innerHTML = '<button class="primary" type="button" id="answer">Answer</button><button type="button" id="skip">Skip</button>';
+  box.appendChild(actions);
+  $("answer").onclick = () => {
+    const answers = event.questions.map((q, n) => {
+      const choices = [...box.querySelectorAll(`input[name=q${n}]:checked`)].map((i) => i.value);
+      const otherField = box.querySelector(`input[data-other="${n}"]`);
+      const other = otherField && otherField.value.trim() ? otherField.value.trim() : null;
+      return { choices: other && !q.multi_select ? [] : choices, other };
+    });
+    sendOnSocket({ type: "answer", id: event.id, answers });
+    add("note", event.questions.map((q, n) => `${q.question} → ${answers[n].other || answers[n].choices.join(", ")}`).join("\n"));
+    closeQuestion();
+  };
+  $("skip").onclick = () => { sendOnSocket({ type: "answer", id: event.id, skipped: true }); closeQuestion(); };
+}
+function closeQuestion() { state.question = null; $("question").hidden = true; $("question").innerHTML = ""; }
+
+// -- the event socket ----------------------------------------------------------
+
+function sendOnSocket(message) {
+  if (state.socket && state.socket.readyState === WebSocket.OPEN) state.socket.send(JSON.stringify(message));
+}
+
+// Browsers cannot set headers on a WebSocket, so the socket opens with a
+// single-use ticket fetched over HTTP; the token itself never goes on it.
+async function eventTicket(turnId) {
+  try {
+    const response = await fetch("/chat/ticket", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+      body: JSON.stringify({ turn_id: turnId }),
+    });
+    return response.ok ? (await response.json()).ticket : null;
+  } catch { return null; }
+}
+
+async function openEvents(turnId) {
+  const ticket = await eventTicket(turnId);
+  if (!ticket) return null;
+  return new Promise((resolve) => {
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    let socket;
+    try {
+      socket = new WebSocket(`${scheme}://${location.host}/chat/events/${turnId}?ticket=${encodeURIComponent(ticket)}`);
+    } catch { resolve(null); return; }
+    const timer = setTimeout(() => resolve(null), 5000);
+    socket.onopen = () => { clearTimeout(timer); resolve(socket); };
+    socket.onerror = () => { clearTimeout(timer); resolve(null); };
+    socket.onmessage = (message) => onEvent(JSON.parse(message.data));
+  });
+}
+
+function onEvent(event) {
+  switch (event.type) {
+    case "thinking": setStatus("Thinking…"); break;
+    case "status": setStatus(event.text); break;
+    case "question": setStatus("Waiting for your answer"); renderQuestion(event); break;
+    case "question_closed": if (state.question && state.question.id === event.id) closeQuestion(); break;
+    case "message": add("interim", markdown(event.text), { html: true }); break;
+    case "tasks": renderTasks(event.tasks); break;
+    case "steer":
+      if (event.status === "missed") add("error", "This note arrived too late for the agent; send it again as a new message.");
+      break;
+    case "done": setStatus(""); break;
+  }
+}
+
+// -- skills ----------------------------------------------------------------------
+// The client owns skills; the agent keeps none and checks the ones each message
+// brings. Here they live in this browser (localStorage), which is fine for
+// skill text but never for the token.
+
+const SKILLS_KEY = "sql-agent-skills";
+const MAX_EQUIPPED = 16, MAX_WORDS = 4000;
+let skills = loadSkills();
+let editing = null;  // id of the skill in the form, or "new"
+
+function loadSkills() {
+  try { const saved = JSON.parse(localStorage.getItem(SKILLS_KEY) || "[]"); return Array.isArray(saved) ? saved : []; }
+  catch { return []; }
+}
+function saveSkills() {
+  try { localStorage.setItem(SKILLS_KEY, JSON.stringify(skills)); } catch {}
+  renderSkills();
+}
+function uuid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+function words(skill) {
+  return [skill.name, skill.description, ...skill.instructions].join(" ").split(/\s+/).filter(Boolean).length;
+}
+function equipped() { return skills.filter((s) => s.on); }
+function skillName(id) { const s = skills.find((k) => k.id === id); return s ? s.name : "a skill"; }
+
+function renderSkills() {
+  const on = equipped();
+  $("skills").textContent = on.length ? `Skills (${on.length})` : "Skills";
+  const list = $("skill-list");
+  list.innerHTML = skills.length ? "" : '<div class="empty">No skills yet.</div>';
+  skills.forEach((skill, index) => {
+    const row = document.createElement("div");
+    row.className = "skill";
+    row.innerHTML =
+      `<input type="checkbox" title="Send with every message" ${skill.on ? "checked" : ""}>` +
+      `<div class="info"><div class="name">${escapeHtml(skill.name)}</div><div class="desc">${escapeHtml(skill.description)}</div></div>` +
+      `<div class="row-actions"><button type="button" data-act="up" ${index ? "" : "disabled"} title="Move up">↑</button>` +
+      `<button type="button" data-act="edit">Edit</button><button type="button" data-act="delete">Delete</button></div>`;
+    row.querySelector("input").onchange = (e) => { skill.on = e.target.checked; saveSkills(); };
+    row.querySelector('[data-act="up"]').onclick = () => { [skills[index - 1], skills[index]] = [skills[index], skills[index - 1]]; saveSkills(); };
+    row.querySelector('[data-act="edit"]').onclick = () => openForm(skill);
+    row.querySelector('[data-act="delete"]').onclick = () => {
+      if (confirm(`Delete the skill "${skill.name}"?`)) { skills = skills.filter((s) => s !== skill); saveSkills(); }
+    };
+    list.appendChild(row);
+  });
+  const total = on.reduce((n, s) => n + words(s), 0);
+  const budget = $("skill-budget");
+  budget.textContent = `${on.length} of ${MAX_EQUIPPED} on · ${total} of ${MAX_WORDS} words`;
+  budget.className = "budget" + (on.length > MAX_EQUIPPED || total > MAX_WORDS ? " over" : "");
+  if (budget.className.includes("over")) budget.textContent += " (the agent leaves out the skills past the limit)";
+}
+
+function formError(text) {
+  const el = $("skill-error");
+  el.hidden = !text;
+  el.textContent = text || "";
+}
+function openForm(skill) {
+  editing = skill ? skill.id : "new";
+  $("skill-form").hidden = false;
+  $("skill-form-title").textContent = skill ? "Edit skill" : "New skill";
+  $("skill-source").value = "";
+  $("skill-name").value = skill ? skill.name : "";
+  $("skill-desc").value = skill ? skill.description : "";
+  $("skill-instructions").value = skill ? skill.instructions.join("\n") : "";
+  formError("");
+  (skill ? $("skill-name") : $("skill-source")).focus();
+}
+function closeForm() { editing = null; $("skill-form").hidden = true; formError(""); }
+
+$("skills").onclick = () => { renderSkills(); $("skills-dialog").showModal(); };
+$("skills-close").onclick = () => $("skills-dialog").close();
+$("skill-add").onclick = () => openForm(null);
+$("skill-cancel").onclick = closeForm;
+
+$("skill-save").onclick = () => {
+  const name = $("skill-name").value.trim();
+  const description = $("skill-desc").value.trim();
+  const instructions = $("skill-instructions").value.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!name || !description || !instructions.length) { formError("A skill needs a name, a description and at least one instruction."); return; }
+  if (instructions.length > 20) { formError("At most 20 instructions."); return; }
+  if (instructions.some((l) => l.length > 1000)) { formError("Each instruction is at most 1,000 characters."); return; }
+  if (editing === "new") {
+    skills.push({ id: uuid(), name, description, instructions, version: 1, on: true });
+  } else {
+    const skill = skills.find((s) => s.id === editing);
+    Object.assign(skill, { name, description, instructions, version: (skill.version || 1) + 1 });
+  }
+  closeForm();
+  saveSkills();
+};
+
+$("skill-propose").onclick = async () => {
+  const source = $("skill-source").value.trim();
+  if (!source) { formError("Describe the skill first."); return; }
+  if (!token()) { formError("Paste your login token at the top first: writing a skill uses the model."); return; }
+  const button = $("skill-propose");
+  button.disabled = true; button.textContent = "Writing…"; formError("");
+  try {
+    const response = await fetch("/skills/propose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token() },
+      body: JSON.stringify({ source_text: source }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) { formError(`Could not write the skill (${response.status}): ${detail(body)}`); return; }
+    const proposal = body.proposal || {};
+    if (proposal.unclear) { formError(proposal.clarification || "The description is unclear; say more about what the skill should do."); return; }
+    $("skill-name").value = proposal.name || "";
+    $("skill-desc").value = proposal.description || "";
+    $("skill-instructions").value = (proposal.instructions || []).join("\n");
+    $("skill-name").focus();
+  } catch (error) {
+    formError("Could not reach the agent: " + error.message);
+  } finally {
+    button.disabled = false; button.textContent = "Write";
+  }
+};
+
+function addSkillsUsed(el, body) {
+  const used = body.skills_used || [], dropped = body.skills_dropped || [];
+  if (!used.length && !dropped.length) return;
+  const line = document.createElement("div");
+  line.className = "used";
+  const reasons = { unsafe: "looks like an injection", over_budget: "past the limit" };
+  line.innerHTML = (used.length ? "Skills used: " + used.map((id) => escapeHtml(skillName(id))).join(", ") : "") +
+    (dropped.length ? `${used.length ? " · " : ""}<span class="dropped">Left out: ` +
+      dropped.map((d) => `${escapeHtml(skillName(d.id))} (${reasons[d.reason] || d.reason})`).join(", ") + "</span>" : "");
+  el.appendChild(line);
+}
+renderSkills();
+
+// -- sending -------------------------------------------------------------------
+
+function setRunning(running) {
+  state.running = running;
+  $("send").textContent = running ? "Send note" : "Send";
+  $("stop").hidden = !running;
+  input.placeholder = running ? "Add a note to the running request…" : "Ask about the data…";
+}
+
+async function ask(text) {
+  if (!token()) { add("error", "Paste your login token at the top first."); tokenField.focus(); return; }
+  add("user", text);
+  setRunning(true);
+  setStatus("Starting…");
+  renderTasks(null);
+  const turnId = newId();
+  state.turnId = turnId;
+  state.socket = await openEvents(turnId);
+  try {
+    const response = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token() },
+      body: JSON.stringify({
+        message: text, session_id: state.sessionId, turn_id: turnId, interactive: !!state.socket,
+        skills: equipped().map(({ id, name, description, instructions, version }) => ({ id, name, description, instructions, version })),
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.ok) {
+      const el = add("assistant", markdown(body.reply || "(no answer)"), { html: true });
+      addSkillsUsed(el, body);
+      addSteps(el, body.trace);
+    } else if (response.status === 499) {
+      add("note", "Stopped.");
+    } else if (response.status === 401 || response.status === 403) {
+      add("error", "The token was not accepted (" + response.status + "): " + detail(body) + "\nPaste a fresh token and try again.");
+    } else {
+      add("error", "Request failed (" + response.status + "): " + detail(body));
+    }
+  } catch (error) {
+    add("error", "Could not reach the agent: " + error.message);
+  } finally {
+    if (state.socket) state.socket.close();
+    state.socket = null;
+    closeQuestion();
+    renderTasks(null);  // the answer covers the list; the steps keep the detail
+    setStatus("");
+    setRunning(false);
+    checkHealth();
+  }
+}
+function detail(body) {
+  const d = body && body.detail;
+  return typeof d === "string" ? d : JSON.stringify(d || body);
+}
+
+function steer(text) {
+  if (!state.socket) { add("error", "Notes need the live connection, which is not open for this request."); return; }
+  add("note", "Note: " + text);
+  sendOnSocket({ type: "steer", id: newId().slice(0, 32), text });
+}
+
+$("composer").onsubmit = (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  if (state.running) steer(text); else ask(text);
+};
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("composer").requestSubmit(); }
+});
+$("stop").onclick = () => fetch("/chat/stop", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token() },
+  body: JSON.stringify({ session_id: state.sessionId, turn_id: state.turnId }),
+});
+$("new").onclick = () => {
+  if (state.running) return;
+  state.sessionId = newId();
+  log.innerHTML = "";
+  renderTasks(null);
+  input.focus();
+};
+input.focus();
+</script>
+</body>
+</html>

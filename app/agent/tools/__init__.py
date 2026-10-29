@@ -1,0 +1,1 @@
+"""Local tools the model can call, plus their toolset registry."""
