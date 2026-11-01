@@ -10,6 +10,11 @@ interactive features of the Revit agent it was taken from (`AI_RevitMCP`):
   answers.
 - **Skills:** the client sends the user's equipped skills with each turn. They are checked for injection,
   capped, and put in front of the model. `/skills/propose` rewrites a user's wording into a skill.
+- **Cards:** the model shows results as cards under its reply (`show_cards`: figures, people, dates,
+  milestones, links) and asks for input in one (`ask_with_card`: a form). The client lists the cards it
+  draws in `cards`; the reply carries them as `blocks`, and a form's answer comes back as the next
+  request's `form_response`. The cards, their tools, checks and prompt rules are the shared
+  [`agent_cards`](../agent_cards) package; `app/agent/tools/cards.py` picks this agent's cards.
 
 There is no UI. Clients talk to it over HTTP and a per-turn WebSocket (see [Contract](#contract)).
 
@@ -31,6 +36,23 @@ The token stays in that browser tab (sessionStorage); skills are kept in the bro
 The SQL MCP server must be running at `MCP_URL`. Without it the service still starts: `/health` reports
 `degraded` with the reason, and each turn tries to connect again.
 
+**Extra MCP servers (optional, any number).** `MCP_EXTRA_SERVERS` lists them by name:
+`{"charts": {"url": "http://localhost:5200/mcp"}, "docs": {"url": "...", "headers": {...}}}`. Each one's
+tools are offered beside the SQL tools while it is up, and left out while it is down: the agent checks it
+beside the SQL server before each turn (5 s deadline by default) and, after a failure, waits 60 s before
+trying again. A tool name two servers list stays with the first (SQL first, then the list's order), and a
+call to a server that breaks is answered with an error, never the end of the turn. A mistake in the setting
+stops startup with what to fix. Changes need a restart.
+
+**Charts (optional).** With the charts MCP server (AI_MCP_Charts) as the `charts` entry (or at
+`CHARTS_MCP_URL`, a shortcut for it), a client that lists
+`"chart"` in `cards` is also offered its `create_*` tools. The model passes a `run_select` result to one;
+the chart's HTML page goes out with the reply as a `chart` block (`{"type": "chart", "title", "html",
+"height"}`, from `agent_cards`), and the model reads only the tool's summary. Clients draw the page in a
+sandboxed `<iframe srcdoc>` with scripts on, so it stays interactive (AI_Frontend `reply-blocks`, the Revit
+desktop's `67-cards.js`). While the charts server is down its tools are left out and the agent answers in
+text (`app/agent/clients/mcp_servers.py`).
+
 ## How a turn runs
 
 `app/agent/loop.py` is the whole agent:
@@ -39,7 +61,7 @@ The SQL MCP server must be running at `MCP_URL`. Without it the service still st
 messages = rules + the MCP server's instructions + earlier turns + skills + the user message
 repeat up to AGENT_MAX_STEPS times, until AGENT_MAX_REQUEST_SECONDS:
     take the steers the user sent meanwhile
-    call the model with the MCP tools and the local ones (ask_user, update_tasks)
+    call the model with the MCP tools and the local ones (ask_user, update_tasks, show_cards, ask_with_card)
     no tool calls -> the answer (unless a new steer or open task items keep it going)
     otherwise run each call; its result (or the server's error JSON) becomes a tool message
 out of steps or time -> one last call without tools writes the answer
@@ -65,6 +87,8 @@ Everything is in `.env` (template: `.env.template`):
 |---|---|
 | `MCP_URL` | The MCP server's streamable-HTTP endpoint, e.g. `http://localhost:5100/mcp` |
 | `MCP_HEADERS` | JSON object of headers sent on every MCP request, e.g. `{"X-Api-Key": "..."}`. Configuration only; the model never sees or sets them |
+| `MCP_EXTRA_SERVERS` | JSON object of optional MCP servers by name, each `{"url", "headers"?, "connect_timeout_seconds"?, "call_timeout_seconds"?}`; unset, the SQL server only |
+| `CHARTS_MCP_URL`, `CHARTS_MCP_HEADERS` | Shortcut for the `charts` entry, e.g. `http://localhost:5200/mcp`, used when `MCP_EXTRA_SERVERS` has none |
 | `AGENT_HOST`, `AGENT_PORT` | Where this service listens (default `127.0.0.1:8321`) |
 | `AIAPI_BASE_URL`, `AIAPI_CHAT_MODEL` | The AI gateway the Azure model config is fetched from, with the caller's own login token |
 | `AGENT_MAX_STEPS`, `AGENT_MAX_REQUEST_SECONDS`, `AGENT_CONTEXT_TOKEN_BUDGET` | Turn limits |

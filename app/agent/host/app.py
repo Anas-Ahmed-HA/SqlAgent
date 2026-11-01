@@ -10,7 +10,9 @@ Run directly:
 
 The MCP server is reached by URL (`MCP_URL`), so nothing is spawned here.
 Startup does not fail when it is unreachable: `/health` reports it, and each
-chat turn tries to connect again.
+chat turn tries to connect again. The extra servers (`MCP_EXTRA_SERVERS`, and
+`CHARTS_MCP_URL` for the charts one) are optional: each adds its tools while
+it is up (agent/clients/mcp_servers.py).
 """
 
 import logging  # noqa: E402
@@ -31,6 +33,7 @@ from agent.api.chat import router as chat_router  # noqa: E402
 from agent.api.page import router as page_router  # noqa: E402
 from agent.api.skills import router as skills_router  # noqa: E402
 from agent.api.status import router as status_router  # noqa: E402
+from agent.clients.mcp_servers import MCPServers  # noqa: E402
 from agent.clients.mcp_session import MCPSession  # noqa: E402
 from agent.config import MCPServerSettings  # noqa: E402
 from agent.errors import MCPConnectionException  # noqa: E402
@@ -66,17 +69,15 @@ async def lifespan(app: FastAPI):
     Runtime state lives in exactly one place: `app.state.runtime`.
     """
     settings = MCPServerSettings.from_env()
-    mcp = MCPSession(
-        settings.url,
-        headers=settings.headers,
-        name="sql",
-        connect_timeout_seconds=settings.connect_timeout_seconds,
-        call_timeout_seconds=settings.call_timeout_seconds,
-    )
+    extras = MCPServerSettings.extras_from_env()
+    mcp = MCPServers(_session(settings), [_session(extra) for extra in extras])
     runtime = Runtime(mcp=mcp)
     app.state.runtime = runtime
 
-    logger.info("startup.connecting", extra={"url": settings.url})
+    logger.info(
+        "startup.connecting",
+        extra={"url": settings.url, "extra_servers": ", ".join(f"{e.name}={e.url}" for e in extras)},
+    )
     try:
         await mcp.connect()
         await mcp.get_tools_for_openai()
@@ -92,6 +93,16 @@ async def lifespan(app: FastAPI):
         await mcp.close()
         if runtime.azure is not None:
             await runtime.azure.aclose()
+
+
+def _session(settings: MCPServerSettings) -> MCPSession:
+    return MCPSession(
+        settings.url,
+        headers=settings.headers,
+        name=settings.name,
+        connect_timeout_seconds=settings.connect_timeout_seconds,
+        call_timeout_seconds=settings.call_timeout_seconds,
+    )
 
 
 app = FastAPI(title="SQL Agent", lifespan=lifespan)

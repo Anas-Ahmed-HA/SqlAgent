@@ -10,7 +10,9 @@ Owns the HTTP connection and the MCP session over it:
    in flight when the connection broke is never repeated.
 3. **Structured results.** MCP ``isError`` is kept beside the text, and the
    result's ``structuredContent`` comes back as data, so callers judge success
-   without parsing text.
+   without parsing text. Embedded pages and images (a chart tool's HTML) come
+   back as ``attachments``, never in the text: they are for the user, and
+   would only fill the model's context.
 4. **The catalogue.** Tools and the server's ``instructions``, read once per
    session.
 
@@ -25,7 +27,7 @@ import json
 import logging
 import time
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -53,6 +55,9 @@ class MCPToolResult:
     elapsed_ms: int = 0
     #: The result's ``structuredContent``, when the server sent one.
     structured: dict[str, Any] | None = None
+    #: Embedded resources and images, in order: ``{"kind": "resource", "uri",
+    #: "mime_type", "text"}`` or ``{"kind": "image", "mime_type", "data"}``.
+    attachments: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
@@ -263,6 +268,10 @@ class MCPSession:
         """The listed tools' names, in the server's order."""
         return [entry["function"]["name"] for entry in self._tools_cache]
 
+    def server_of(self, tool: str) -> str | None:
+        """This server's name when it listed ``tool``."""
+        return self.name if tool in self.tool_names() else None
+
     # -- execution ---------------------------------------------------------
 
     async def call_tool_structured(self, name: str, arguments: dict[str, Any]) -> MCPToolResult:
@@ -305,12 +314,24 @@ class MCPSession:
 
     @staticmethod
     def _structured(name: str, result: Any, *, elapsed_ms: int) -> MCPToolResult:
-        parts = [
-            block.text
-            if getattr(block, "type", None) == "text"
-            else json.dumps(block.model_dump(), default=str)
-            for block in result.content
-        ]
+        parts: list[str] = []
+        attachments: list[dict[str, Any]] = []
+        for block in result.content:
+            kind = getattr(block, "type", None)
+            resource = getattr(block, "resource", None)
+            if kind == "text":
+                parts.append(block.text)
+            elif kind == "resource" and isinstance(getattr(resource, "text", None), str):
+                attachments.append({
+                    "kind": "resource",
+                    "uri": str(resource.uri),
+                    "mime_type": resource.mimeType or "",
+                    "text": resource.text,
+                })
+            elif kind == "image":
+                attachments.append({"kind": "image", "mime_type": block.mimeType or "", "data": block.data})
+            else:
+                parts.append(json.dumps(block.model_dump(), default=str))
         structured = getattr(result, "structuredContent", None)
         return MCPToolResult(
             text="\n".join(parts) if parts else "(no content returned)",
@@ -318,6 +339,7 @@ class MCPSession:
             tool_name=name,
             elapsed_ms=elapsed_ms,
             structured=structured if isinstance(structured, dict) else None,
+            attachments=attachments,
         )
 
 

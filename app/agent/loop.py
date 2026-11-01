@@ -4,9 +4,11 @@ The agent: one plain tool loop over an MCP server reached by URL.
     build the messages (rules, the server's instructions, history, skills, the user message)
     repeat, at most `max_steps` times and until the deadline:
         take the steers the user sent meanwhile
-        call the model with the MCP tools and the local ones (ask_user, update_tasks)
+        call the model with the MCP tools and the local ones (ask_user, update_tasks,
+            show_cards, ask_with_card)
         no tool calls -> that is the answer (unless a steer or open task items keep it going)
         otherwise run each call and add its result as a `tool` message
+            (a chart page goes under the reply as a `chart` block instead)
     out of steps or time -> one last call without tools writes the answer
     save the conversation
 
@@ -28,8 +30,8 @@ import time
 import uuid
 from typing import Any
 
-from agent.clients.mcp_session import MCPSession
-from agent.config import AgentConfig
+from agent.clients.mcp_session import MCPSession, MCPToolResult
+from agent.config import CHARTS_SERVER, AgentConfig
 from agent.errors import ContextTooLongException, MCPConnectionException, ToolTimeoutException
 from agent.host.steers import Steers, steers as default_steers
 from agent.host.turn_events import publish_message, publish_status, publish_tasks, publish_thinking
@@ -50,7 +52,9 @@ from agent.observability.turn_trace import (
     with_ui_status,
 )
 from agent.prompts.templates import (
+    CHARTS_NOTE,
     EARLIER_TOOL_RESULTS_NOTE,
+    NO_CHARTS_NOTE,
     SYSTEM_PROMPT,
     build_open_tasks_note,
     build_server_instructions_message,
@@ -60,9 +64,19 @@ from agent.prompts.templates import (
     build_wrap_up_note,
 )
 from agent.tools.base import LocalCall, LocalToolRegistry
+from agent.tools.cards import SQL_AGENT_CARD_TYPES, CardsTool
 from agent.tools.questions import AskUserTool
 from agent.tools.tasks import UpdateTasksTool, add_steers, unfinished
 from agent.utils.fingerprint import failure_signature
+from agent_cards import (
+    MAX_CHARTS_PER_TURN,
+    card_answer_note,
+    cards_prompt,
+    chart_block,
+    draws_charts,
+    parse_form_response,
+    usable_types,
+)
 from skills_hub.prompt import build_equipped_skills_message
 
 __all__ = ["AgentLoop", "MAX_REPLY_CHARS"]
@@ -78,6 +92,8 @@ _REPEAT_REFUSAL = (
     "NOT RUN -- this exact call already failed in this request. Change the "
     "arguments (read the earlier error and its fix) or answer with what you have."
 )
+#: A dashboard page holds several charts; it gets a taller frame than one chart.
+_DASHBOARD_HEIGHT = 900
 
 
 class _Unreachable(Exception):
@@ -106,7 +122,7 @@ class AgentLoop:
         self.memory = memory
         self.config = config
         self.steers = steers or default_steers
-        self.local_tools = local_tools or LocalToolRegistry([AskUserTool(), UpdateTasksTool()])
+        self.local_tools = local_tools or LocalToolRegistry([AskUserTool(), UpdateTasksTool(), CardsTool()])
 
     async def run(
         self,
@@ -116,14 +132,20 @@ class AgentLoop:
         hr_code: str | None = None,
         equipped_skills: list[dict[str, Any]] | None = None,
         interactive: bool = False,
+        card_types: list[str] | None = None,
+        form_response: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run one turn and return its state: ``final_response``, ``messages``,
-        ``tool_results``, ``planning_ms``, ``context_usage``, ``steers``, ``tasks``.
+        ``tool_results``, ``planning_ms``, ``context_usage``, ``steers``, ``tasks``,
+        ``cards``, ``charts``.
 
         ``history`` from the client wins over the server's memory of the
         session. ``equipped_skills`` are already checked (agent.host.turns).
         ``interactive`` says the client answers questions, so ``ask_user`` is
-        offered.
+        offered. ``card_types`` are the cards the client draws (none when
+        missing); ``"chart"`` among them offers the charts server's tools, and
+        the charts drawn go out as ``charts``. ``form_response`` is the user's
+        answer to a card of an earlier turn.
         """
         started = time.monotonic()
         state: dict[str, Any] = {
@@ -132,6 +154,11 @@ class AgentLoop:
             "hr_code": hr_code or session_id.split("|", 1)[0],
             "user_message": user_message,
             "interactive": bool(interactive),
+            "card_types": usable_types(SQL_AGENT_CARD_TYPES, card_types),
+            "cards": [],
+            "draws_charts": draws_charts(card_types),
+            "charts": [],
+            "form_response": parse_form_response(form_response),
             "deadline": started + self.config.max_request_seconds,
             "questions_asked": 0,
             "questions_total": 0,
@@ -189,28 +216,62 @@ class AgentLoop:
         # Cut once here, so every model call of this turn sends the same prefix.
         earlier = trim_earlier_turns(earlier, self.config.full_turns)
 
-        await self._tools(check=True)  # connects, and reads the server's instructions
+        tools = await self._tools(state, check=True)  # connects, and reads the servers' instructions
         rules = [{"role": "system", "content": SYSTEM_PROMPT}]
-        if self.mcp.instructions:
-            rules.append({"role": "system", "content": build_server_instructions_message(self.mcp.instructions)})
+        if state["card_types"]:
+            rules.append({"role": "system", "content": cards_prompt(state["card_types"])})
+        chart_tools = sum(self._server_of(t["function"]["name"]) == CHARTS_SERVER for t in tools)
+        # Why a turn has no charts: the client did not ask for them, or the
+        # charts server is down (then it asked, but no chart tool is listed).
+        logger.info(
+            "turn.tools",
+            extra={"tools": len(tools), "chart_tools": chart_tools, "client_draws_charts": state["draws_charts"]},
+        )
+        instructions = self._instructions(state)
+        if instructions:
+            rules.append({"role": "system", "content": build_server_instructions_message(instructions)})
+        if chart_tools:
+            rules.append({"role": "system", "content": CHARTS_NOTE})
+        elif not state["draws_charts"]:
+            rules.append({"role": "system", "content": NO_CHARTS_NOTE})
 
         context = [{"role": "system", "content": build_equipped_skills_message(equipped_skills or [])}]
         if any(m.get("role") == "tool" for m in earlier):
             context.append({"role": "system", "content": EARLIER_TOOL_RESULTS_NOTE})
+        if state["form_response"] is not None:
+            context.append({"role": "system", "content": card_answer_note(state["form_response"])})
         return [*rules, *earlier, *context, {"role": "user", "content": state["user_message"]}]
 
-    async def _tools(self, *, check: bool = False) -> list[dict[str, Any]]:
-        """The server's tools; with ``check``, first make sure it answers now."""
+    def _server_of(self, tool: str) -> str | None:
+        server_of = getattr(self.mcp, "server_of", None)
+        return server_of(tool) if server_of is not None else None
+
+    def _hidden_servers(self, state: dict[str, Any]) -> frozenset[str]:
+        """Servers whose tools this turn does not offer: charts, for a client
+        that cannot draw them."""
+        return frozenset() if state["draws_charts"] else frozenset({CHARTS_SERVER})
+
+    def _instructions(self, state: dict[str, Any]) -> str:
+        instructions_of = getattr(self.mcp, "instructions_of", None)
+        if instructions_of is None:
+            return self.mcp.instructions
+        return instructions_of(self._hidden_servers(state))
+
+    async def _tools(self, state: dict[str, Any], *, check: bool = False) -> list[dict[str, Any]]:
+        """The servers' tools this turn offers; with ``check``, first make sure
+        the server answers now."""
         try:
             if check:
                 await self.mcp.ping()
-            return await self.mcp.get_tools_for_openai()
+            tools = await self.mcp.get_tools_for_openai()
         except MCPConnectionException as exc:
             raise _Unreachable(
                 f"The data service (MCP server at {self.mcp.url}) is not reachable, so the "
                 f"question could not be answered.\n\n{exc}\n\nCheck that the server is running "
                 "and send the request again."
             ) from exc
+        hidden = self._hidden_servers(state)
+        return [t for t in tools if self._server_of(t["function"]["name"]) not in hidden]
 
     # -- the loop ----------------------------------------------------------
 
@@ -224,7 +285,7 @@ class AgentLoop:
                     _DEADLINE_FALLBACK,
                 )
             steered = self._take_steers(state)
-            tools = with_ui_status([*await self._tools(), *self.local_tools.definitions(state)])
+            tools = with_ui_status([*await self._tools(state), *self.local_tools.definitions(state)])
             message = await self._complete(state, tools=tools)
 
             if not message.tool_calls:
@@ -358,7 +419,57 @@ class AgentLoop:
         if result.is_error:
             state["failed_signatures"] = [*state["failed_signatures"], signature]
             return answer(result.text, "failure", _error_code(result.structured, result.text))
+        if result.attachments:
+            return answer(self._attach(state, result), "success")
         return answer(result.text, "success")
+
+    @staticmethod
+    def _attach(state: dict[str, Any], result: MCPToolResult) -> str:
+        """Put a tool's chart pages under the reply; the tool message the model
+        reads: the tool's own text, then what became of each attachment.
+
+        The page itself never goes to the model: it is for the user, and its
+        markup and data would only fill the context.
+        """
+        summary = _json_object(result.text)
+        dashboard = "items" in summary and "chartType" not in summary
+        notes: list[str] = []
+        for attachment in result.attachments:
+            is_page = attachment["kind"] == "resource" and attachment["mime_type"].startswith("text/html")
+            if not is_page:
+                notes.append(
+                    "The image was not shown: this chat draws charts as interactive pages. "
+                    "Call again with format 'html'."
+                    if attachment["kind"] == "image"
+                    else f"A {attachment['mime_type'] or 'file'} attachment was returned and not shown."
+                )
+                continue
+            if not state["draws_charts"]:
+                notes.append("This chat cannot show charts: give the figures in your reply instead.")
+                continue
+            if len(state["charts"]) >= MAX_CHARTS_PER_TURN:
+                notes.append(
+                    f"The chart was not shown: one reply carries at most {MAX_CHARTS_PER_TURN}. "
+                    "Put several charts on one create_dashboard page."
+                )
+                continue
+            block = chart_block(
+                attachment["text"],
+                title=summary.get("title"),
+                height=_DASHBOARD_HEIGHT if dashboard else None,
+            )
+            if block is None:
+                notes.append(
+                    "The chart was not shown: its page is too large to send. Aggregate in SQL "
+                    "(fewer rows, fewer series) and draw it again."
+                )
+                continue
+            state["charts"] = [*state["charts"], block]
+            notes.append(
+                "Shown to the user under your reply, interactive. In your reply, say what it "
+                "shows; do not link to it or call it a file."
+            )
+        return "\n".join([result.text, *dict.fromkeys(notes)])
 
     @staticmethod
     def _answer_rest(state: dict[str, Any]) -> None:
@@ -451,6 +562,15 @@ class AgentLoop:
         await self.memory.save(
             session_id=state["session_id"], messages=messages, lessons=[], successful_tools=[]
         )
+
+
+def _json_object(text: str) -> dict[str, Any]:
+    """``text`` read as one JSON object (a chart tool's summary), or empty."""
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _error_code(structured: dict[str, Any] | None, text: str) -> str:

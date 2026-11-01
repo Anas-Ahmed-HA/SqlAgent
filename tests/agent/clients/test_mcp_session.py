@@ -15,6 +15,7 @@ import time
 import pytest
 import uvicorn
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import EmbeddedResource, TextContent, TextResourceContents
 
 from agent.clients.mcp_session import MCPSession
 from agent.errors import MCPConnectionException
@@ -45,6 +46,12 @@ def server_url():
         """Always fails."""
         raise ValueError("bad query")
 
+    @server.tool()
+    def chart() -> list:
+        """A summary, then the page: the shape of the charts server's results."""
+        page = TextResourceContents(uri="plotly://charts/bar.html", mimeType="text/html", text="<html></html>")
+        return [TextContent(type="text", text='{"chartType": "bar"}'), EmbeddedResource(type="resource", resource=page)]
+
     port = _free_port()
     uv = uvicorn.Server(uvicorn.Config(server.streamable_http_app(), host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=uv.run, daemon=True)
@@ -73,12 +80,27 @@ def test_tools_instructions_and_calls_over_http(server_url) -> None:
 
     instructions, tools, echoed, key, failed = asyncio.run(scenario())
     assert instructions == "Call echo first."
-    assert [t["function"]["name"] for t in tools] == ["echo", "api_key", "fails"]
+    assert [t["function"]["name"] for t in tools] == ["echo", "api_key", "fails", "chart"]
     assert tools[0]["function"]["parameters"]["properties"]["text"]["type"] == "string"
     assert echoed.success and echoed.text == "hello"
     # Configured headers reach the server on every request.
     assert key.text == "k-123"
     assert failed.is_error and "bad query" in failed.text
+
+
+def test_an_embedded_page_comes_back_as_an_attachment_not_as_text(server_url) -> None:
+    async def scenario():
+        mcp = MCPSession(server_url)
+        try:
+            return await mcp.call_tool_structured("chart", {})
+        finally:
+            await mcp.close()
+
+    result = asyncio.run(scenario())
+    assert result.text == '{"chartType": "bar"}'
+    assert result.attachments == [
+        {"kind": "resource", "uri": "plotly://charts/bar.html", "mime_type": "text/html", "text": "<html></html>"}
+    ]
 
 
 def test_an_unreachable_server_is_a_connection_error_naming_the_url() -> None:

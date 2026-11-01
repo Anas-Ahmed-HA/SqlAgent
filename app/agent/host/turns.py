@@ -238,6 +238,8 @@ async def run_chat(
                 hr_code=hr_code,
                 equipped_skills=skills,
                 interactive=payload.interactive,
+                card_types=payload.cards,
+                form_response=payload.form_response,
             )
         except NotReadyError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -298,4 +300,6 @@ async def run_chat(
         ),
         skills_used=skills_used,
         skills_dropped=skills_dropped,
+        # Charts first: an input card, when there is one, stays last.
+        blocks=[*(final.get("charts") or []), *(final.get("cards") or [])],
     )

@@ -188,6 +188,29 @@ def test_chat_runs_a_turn_and_returns_its_reply_and_trace(client_factory):
     assert mcp.calls == [("run_select", {"database": "Apps", "sql": "SELECT 1"})]
 
 
+def test_a_client_that_draws_charts_gets_the_chart_tools_and_the_chart(client_factory):
+    """The website's own `cards` list, end to end over HTTP."""
+    from agent.clients.mcp_servers import MCPServers
+    from agent.clients.mcp_session import MCPToolResult
+
+    page = "<!DOCTYPE html><html><body></body></html>"
+    charts = FakeMCP(
+        {"create_bar_chart": MCPToolResult(
+            text='{"chartType": "bar", "title": "Staff"}',
+            attachments=[{"kind": "resource", "uri": "plotly://c.html", "mime_type": "text/html", "text": page}],
+        )},
+        tools=["create_bar_chart"], name="charts",
+    )
+    azure = FakeAzure([tool_turn(("c1", "create_bar_chart", {"x": "Dept", "y": ["Staff"]})), text_turn("IT leads.")])
+    website = ["people", "items", "emails", "events", "files", "images", "stats", "links",
+               "timeline", "date", "callout", "form", "confirm", "chart"]
+    with client_factory(azure, MCPServers(FakeMCP(), [charts])) as client:
+        response = client.post("/chat", json={"message": "chart staff", "cards": website}, headers=auth_headers())
+    assert response.status_code == 200
+    assert "create_bar_chart" in {t["function"]["name"] for t in azure.calls[0]["tools"]}
+    assert response.json()["blocks"] == [{"type": "chart", "title": "Staff", "html": page}]
+
+
 def test_session_id_isolates_conversations(client_factory):
     azure = FakeAzure([text_turn("a"), text_turn("b"), text_turn("c")])
     with client_factory(azure, FakeMCP()) as client:

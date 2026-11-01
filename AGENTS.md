@@ -25,7 +25,8 @@ afterwards.
 
 - `app/agent/loop.py`: the agent, one tool loop. New behaviour goes here as plain code, not as a framework.
 - `app/agent/clients/`: Azure, the AI gateway, the employee check, and the MCP client
-  (`mcp_session.py`, streamable HTTP).
+  (`mcp_session.py`, streamable HTTP, one per server; `mcp_servers.py` puts the required SQL server and
+  the optional `MCP_EXTRA_SERVERS` behind one interface and routes each tool to the server that listed it).
 - `app/agent/tools/`: local tools the loop answers itself (`ask_user`, `update_tasks`); one module per tool,
   registered in `AgentLoop.local_tools`.
 - `app/agent/host/`, `app/agent/api/`: the FastAPI service, turn queueing and stop, and the per-turn event
@@ -36,8 +37,14 @@ afterwards.
 
 ## Rules
 
+- **Cards come from `agent_cards`, the one source shared by every agent** (`../agent_cards`). Card types,
+  tool definitions, checks, prompt rules and the answer note live there; `app/agent/tools/cards.py` only
+  picks this agent's card types. Never copy or re-define card logic here: change the package.
 - **The model never decides access.** Which databases and objects exist is decided by the MCP server.
   Credentials and headers come from configuration (`MCP_HEADERS`), never from tool arguments or prompts.
+- **Only the SQL server can end a turn.** An extra MCP server that is down loses its tools, and one that
+  breaks mid-call answers with an error; the turn goes on. Add a server by configuration
+  (`MCP_EXTRA_SERVERS`), not code.
 - **Every tool call gets a tool message**, on every path out of the loop, including errors and an
   unreachable server. Azure rejects a history with an unanswered call. Tests check
   `validate_message_sequence`.

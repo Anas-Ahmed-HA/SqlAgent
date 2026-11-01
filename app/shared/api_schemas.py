@@ -64,6 +64,14 @@ class ChatRequest(BaseModel):
     #: questions there (CAPABILITY_QUESTIONS). Without it the assistant never
     #: asks: nobody could answer.
     interactive: bool = False
+    #: The card types this client draws under a reply (CAPABILITY_CARDS), e.g.
+    #: ``["people", "stats", "form"]``. Missing means none: the assistant
+    #: answers in text only.
+    cards: list[Annotated[str, Field(max_length=40)]] | None = Field(default=None, max_length=40)
+    #: The user's answer to an input card of an earlier reply:
+    #: ``{"block_id", "action": "submit" | "cancel", "values"}``. ``message``
+    #: is then the client's readable line for it.
+    form_response: dict[str, Any] | None = None
 
 
 class EventTicketRequest(BaseModel):
@@ -106,6 +114,12 @@ class ChatResponse(BaseModel):
     """Ids of the request's skills this turn put in front of the model, in order."""
     skills_dropped: list[SkippedSkill] = Field(default_factory=list)
     """The request's skills left out: unsafe text, or past the equipped limits."""
+    blocks: list[dict] = Field(default_factory=list)
+    """Cards to draw under the reply, in order (``agent_cards``; CAPABILITY_CARDS).
+    An input card (``form``, ``confirm``) has an ``id``; the user's answer comes
+    back as the next request's ``form_response``. Charts come first, as
+    ``chart`` blocks (a whole HTML page to draw in a sandboxed frame), when the
+    request's ``cards`` lists ``"chart"``."""
 
 
 class HealthResponse(BaseModel):

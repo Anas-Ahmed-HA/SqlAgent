@@ -11,6 +11,7 @@ from typing import Any
 
 __all__ = [
     "CAPABILITIES",
+    "CAPABILITY_CARDS",
     "CAPABILITY_EVENT_TICKETS",
     "CAPABILITY_QUESTIONS",
     "CLIENT_ANSWER",
@@ -144,8 +145,13 @@ CAPABILITY_STEERS = "steers"
 #: tickets. A client uses a ticket when this is listed, and the
 #: ``Authorization`` header otherwise.
 CAPABILITY_EVENT_TICKETS = "event_tickets"
+#: Cards under a reply: the chat request's ``cards`` (the types the client
+#: draws) and ``form_response``, and ``ChatResponse.blocks``. The cards are the
+#: shared ``agent_cards`` package's, mirrored by the website.
+CAPABILITY_CARDS = "cards"
 CAPABILITIES = frozenset({
     CAPABILITY_SKILLS, CAPABILITY_QUESTIONS, CAPABILITY_STEERS, CAPABILITY_EVENT_TICKETS,
+    CAPABILITY_CARDS,
 })
 
 #: ``/health`` ``status`` values. ``starting`` and ``degraded`` still serve

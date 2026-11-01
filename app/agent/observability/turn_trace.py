@@ -74,11 +74,16 @@ _FIXED_UI_STATUS = {
     "run_select": "Running a query",
     "ask_user": "Asking you a question",
     "update_tasks": "Updating the task list",
+    "show_cards": "Preparing the cards",
+    "ask_with_card": "Preparing a card for you",
+    "create_dashboard": "Building a dashboard",
 }
 
 
 def fallback_ui_status(tool_name: str) -> str:
     """Fixed status for a call whose model-written one is missing or unusable."""
+    if tool_name not in _FIXED_UI_STATUS and tool_name.startswith("create_"):
+        return "Drawing a chart"  # the charts server's tools
     return _FIXED_UI_STATUS.get(tool_name, "Reading the data")
 
 

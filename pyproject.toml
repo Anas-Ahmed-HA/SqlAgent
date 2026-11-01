@@ -14,6 +14,7 @@ dependencies = [
     "pydantic==2.13.4",
     "httpx==0.28.1",
     "PyJWT==2.10.1",
+    "agent-cards",
 ]
 
 [dependency-groups]
@@ -24,6 +25,10 @@ dev = [
 [tool.uv]
 python-preference = "managed"
 package = false
+
+[tool.uv.sources]
+# The shared cards package, beside this repository until it has its own remote.
+agent-cards = { path = "../agent_cards", editable = true }
 
 [tool.pytest.ini_options]
 pythonpath = ["app"]

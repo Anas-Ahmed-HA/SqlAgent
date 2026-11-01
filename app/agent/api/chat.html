@@ -50,6 +50,10 @@
   .msg table { border-collapse: collapse; font-size: 14px; }
   .msg th, .msg td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
   .msg th { background: var(--code); }
+  /* A chart page in a sandboxed frame; it paints its own white background. */
+  .msg:has(.chart) { max-width: 100%; width: 100%; box-sizing: border-box; }
+  .chart { margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff; }
+  .chart iframe { display: block; width: 100%; border: 0; }
   details.steps { margin-top: 8px; font-size: 13px; color: var(--muted); }
   details.steps summary { cursor: pointer; }
   .step { border-top: 1px solid var(--line); padding: 6px 0; }
@@ -521,6 +525,25 @@ $("skill-propose").onclick = async () => {
   }
 };
 
+// A chart is the chart tools' whole page. `allow-scripts` without
+// `allow-same-origin` runs it in an origin of its own: interactive, but it
+// cannot read this page or the token.
+function addCharts(el, blocks) {
+  for (const b of blocks || []) {
+    if (!b || b.type !== "chart" || typeof b.html !== "string" || !b.html.trim()) continue;
+    const box = document.createElement("div");
+    box.className = "chart";
+    const frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "allow-scripts");
+    frame.setAttribute("referrerpolicy", "no-referrer");
+    frame.title = b.title || "Chart";
+    frame.style.height = Math.min(Math.max(Number(b.height) || 420, 240), 1600) + "px";
+    frame.srcdoc = b.html;
+    box.appendChild(frame);
+    el.appendChild(box);
+  }
+}
+
 function addSkillsUsed(el, body) {
   const used = body.skills_used || [], dropped = body.skills_dropped || [];
   if (!used.length && !dropped.length) return;
@@ -558,12 +581,15 @@ async function ask(text) {
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token() },
       body: JSON.stringify({
         message: text, session_id: state.sessionId, turn_id: turnId, interactive: !!state.socket,
+        // This page draws charts, and no other cards.
+        cards: ["chart"],
         skills: equipped().map(({ id, name, description, instructions, version }) => ({ id, name, description, instructions, version })),
       }),
     });
     const body = await response.json().catch(() => ({}));
     if (response.ok) {
       const el = add("assistant", markdown(body.reply || "(no answer)"), { html: true });
+      addCharts(el, body.blocks);
       addSkillsUsed(el, body);
       addSteps(el, body.trace);
     } else if (response.status === 499) {

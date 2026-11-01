@@ -137,8 +137,10 @@ class FakeMCP:
         tools: list[str] | None = None,
         instructions: str = "Call list_databases first.",
         unreachable: bool = False,
+        name: str = "sql",
     ) -> None:
-        self.url = "http://mcp.test/mcp"
+        self.name = name
+        self.url = "http://mcp.test/mcp" if name == "sql" else f"http://{name}.test/mcp"
         self.instructions = instructions
         self.results = dict(results or {})
         self.tool_list = list(tools or SQL_TOOLS)
@@ -157,6 +159,12 @@ class FakeMCP:
 
     async def ping(self) -> None:
         await self.ensure_ready()
+
+    async def connect(self) -> None:
+        await self.ensure_ready()
+
+    async def close(self) -> None:
+        return None
 
     async def get_tools_for_openai(self, refresh: bool = False) -> list[dict]:
         await self.ensure_ready()

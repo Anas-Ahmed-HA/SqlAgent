@@ -8,7 +8,9 @@ concatenating strings at call sites, so a prompt change is a change here.
 from __future__ import annotations
 
 __all__ = [
+    "CHARTS_NOTE",
     "EARLIER_TOOL_RESULTS_NOTE",
+    "NO_CHARTS_NOTE",
     "SKILL_APP_CONTEXT",
     "SYSTEM_PROMPT",
     "build_open_tasks_note",
@@ -44,6 +46,31 @@ EARLIER_TOOL_RESULTS_NOTE = (
     "Tool results from earlier turns in this conversation show the data as it was "
     "at that time. Use them to know what was already found (object names, columns, "
     "errors), but query again when the user asks for current figures."
+)
+
+#: Added when the turn offers the charts server's tools (the client draws charts).
+CHARTS_NOTE = (
+    "You can draw charts with the create_* tools. Draw one when the user asks for a "
+    "chart, or when a breakdown or a trend reads better as one than as a table.\n"
+    "- Query first, aggregated to what the chart shows, and pass run_select's result "
+    "as `data` unchanged.\n"
+    "- Keep format html (the default). The chart is drawn under your reply, "
+    "interactive; you never see it, only its summary. Do not ask for png.\n"
+    "- In your reply, say what the chart shows (the pattern, the figure that "
+    "matters). Do not link to it or call it a file.\n"
+    "- For two or more charts, use one create_dashboard call, not one call per chart. "
+    "Give it columns 2. With indicator figures, columns 4 fits four in a row; then "
+    "give each other chart columnSpan 2. The page keeps "
+    "that grid where the chat is wide enough and stacks the charts where it is not, "
+    "so never lower columns to fit a small screen. Give a chart with many or long "
+    "labels columnSpan 2, and put indicator figures together in a row of their own."
+)
+
+#: Added when the client cannot draw charts, so the model says why there is
+#: none instead of guessing at what it lacks.
+NO_CHARTS_NOTE = (
+    "This chat cannot show charts. When the user asks for one, say that charts "
+    "show in the chat apps that draw them, and give the figures as a short table."
 )
 
 #: What a skill is for in this app, for the AI that rewrites a user's wording
