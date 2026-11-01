@@ -57,6 +57,7 @@ _UI_STATUS_MAX_CHARS = 80
 _UI_STATUS_DESCRIPTION = (
     "Optional. One short plain sentence, in the user's language, telling the "
     "user what this call is doing, e.g. 'Counting laptops per company'. "
+    "Business words only: no SQL, and no database, table or column names. "
     f"At most {_UI_STATUS_MAX_CHARS} characters, no markdown."
 )
 
@@ -66,12 +67,13 @@ _UI_STATUS_DESCRIPTION = (
 MAX_TRACE_BYTES = 1024 * 1024
 _TRUNCATION_NOTE = "\n[truncated: {omitted} characters omitted to keep the stored trace under 1 MB]"
 
+#: Read by business owners and directors: what is happening, never how.
 _FIXED_UI_STATUS = {
-    "list_databases": "Looking up the databases",
-    "get_business_rules": "Reading the business rules",
-    "list_objects": "Listing the tables and views",
-    "describe_object": "Reading the columns",
-    "run_select": "Running a query",
+    "list_databases": "Finding the right data",
+    "get_business_rules": "Reading how the figures are defined",
+    "list_objects": "Finding the right data",
+    "describe_object": "Checking what the data holds",
+    "run_select": "Gathering the figures",
     "ask_user": "Asking you a question",
     "update_tasks": "Updating the task list",
     "show_cards": "Preparing the cards",

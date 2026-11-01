@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import json
+import re
 
 from agent.observability.turn_trace import (
     MAX_TRACE_BYTES,
@@ -52,10 +53,17 @@ def test_split_ui_status_cleans_the_text_and_leaves_real_arguments():
 
 
 def test_fallback_statuses_by_tool_name():
-    assert fallback_ui_status("run_select") == "Running a query"
-    assert fallback_ui_status("get_business_rules") == "Reading the business rules"
+    assert fallback_ui_status("run_select") == "Gathering the figures"
+    assert fallback_ui_status("get_business_rules") == "Reading how the figures are defined"
     assert fallback_ui_status("ask_user") == "Asking you a question"
     assert fallback_ui_status("some_new_tool") == "Reading the data"
+
+
+def test_fallback_statuses_speak_to_business_readers():
+    # Directors read these while the agent works: what is happening, never the database.
+    technical = re.compile(r"\b(sql|quer(y|ies)|columns?|tables?|views?|databases?|schemas?|rows?)\b", re.I)
+    for tool in ("list_databases", "get_business_rules", "list_objects", "describe_object", "run_select", "unknown"):
+        assert not technical.search(fallback_ui_status(tool)), fallback_ui_status(tool)
 
 
 def _call(call_id, name, args):
@@ -89,7 +97,7 @@ def test_trace_covers_only_this_turn_and_groups_parallel_calls_by_step():
     assert spans["a"]["step"] == spans["b"]["step"] == 1 and spans["c"]["step"] == 2
     assert spans["a"]["ui_status"] == "Looking at the open view"
     assert spans["a"]["input"] == {}  # ui_status is not part of the stored input
-    assert spans["b"]["ui_status"] == "Running a query"
+    assert spans["b"]["ui_status"] == "Gathering the figures"
     assert spans["b"]["outcome"] == "error" and spans["b"]["error_kind"] == "runtime"
     # Never answered (the turn stopped first): recorded, not dropped.
     assert spans["c"]["outcome"] == "not_run" and spans["c"]["output"] is None
